@@ -1,43 +1,34 @@
-import json
 import os
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pymongo import MongoClient
 
 app = FastAPI()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-FILE_DATI = "database.json"
+# --- CONNESSIONE MONGO ---
+# Prenderemo la stringa di connessione dalle impostazioni di Render per sicurezza
+MONGO_URI = os.getenv("MONGO_URI")
+client = MongoClient(MONGO_URI)
+db = client["progetto_deimos"]
+collection = db["risultati"]
 
-# Funzione per caricare i dati all'avvio
-def carica_dati():
-    if os.path.exists(FILE_DATI):
-        with open(FILE_DATI, "r") as f:
-            return json.load(f)
-    return {"status": "In attesa", "messaggio": "Nessun dato ricevuto."}
-
-# Carichiamo i dati all'avvio del server
-database_temporaneo = carica_dati()
-SECRET_TOKEN = "Password"
+SECRET_TOKEN = "Password" # La stessa che usi sul PC
 
 @app.get("/dati-aggiornati")
 async def get_data():
-    return database_temporaneo
+    # Cerca l'ultimo documento salvato, escludendo l'ID interno di Mongo
+    doc = collection.find_one({}, {"_id": 0})
+    if doc:
+        return doc
+    return {"status": "In attesa", "messaggio": "Nessun dato nel database."}
 
 @app.post("/update")
 async def update_data(payload: dict, x_auth_token: str = Header(None)):
-    global database_temporaneo
     if x_auth_token != SECRET_TOKEN:
         raise HTTPException(status_code=403, detail="Token non valido")
     
-    database_temporaneo = payload
-    # SALVIAMO SU DISCO
-    with open(FILE_DATI, "w") as f:
-        json.dump(payload, f)
-        
+    # Sovrascrive i dati esistenti (o ne crea di nuovi se non esistono)
+    collection.replace_one({}, payload, upsert=True)
     return {"status": "successo"}
